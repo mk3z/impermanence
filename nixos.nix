@@ -47,10 +47,10 @@ let
   '';
 
   # Create fileSystems bind mount entry.
-  mkBindMountNameValuePair = { directory, persistentStoragePath, ... }: {
-    name = concatPaths [ "/" directory ];
+  mkBindMountNameValuePair = { dirPath, persistentStoragePath, ... }: {
+    name = concatPaths [ "/" dirPath ];
     value = {
-      device = concatPaths [ persistentStoragePath directory ];
+      device = concatPaths [ persistentStoragePath dirPath ];
       noCheck = true;
       options = [ "bind" ]
         ++ optional cfg.${persistentStoragePath}.hideMounts "x-gvfs-hide";
@@ -100,6 +100,15 @@ in
                       file should be stored.
                     '';
                   };
+                  home = mkOption {
+                    type = nullOr path;
+                    default = null;
+                    internal = true;
+                    description = ''
+                      The path to the home directory the file is
+                      placed within.
+                    '';
+                  };
                 };
               };
               dirPermsOpts = {
@@ -138,6 +147,10 @@ in
                     '';
                   };
                   parentDirectory = dirPermsOpts;
+                  filePath = mkOption {
+                    type = path;
+                    internal = true;
+                  };
                 };
               };
               dirOpts = {
@@ -148,16 +161,26 @@ in
                       The path to the directory.
                     '';
                   };
+                  dirPath = mkOption {
+                    type = path;
+                    internal = true;
+                  };
                 } // dirPermsOpts;
               };
               rootFile = submodule [
                 commonOpts
                 fileOpts
-                { parentDirectory = mkDefault defaultPerms; }
+                ({ config, ... }: {
+                  parentDirectory = mkDefault defaultPerms;
+                  filePath = mkDefault config.file;
+                })
               ];
               rootDir = submodule ([
                 commonOpts
                 dirOpts
+                ({ config, ... }: {
+                  dirPath = mkDefault config.directory;
+                })
               ] ++ (mapAttrsToList (n: v: { ${n} = mkDefault v; }) defaultPerms));
             in
             {
@@ -173,14 +196,36 @@ in
                             user = name;
                             group = users.${userDefaultPerms.user}.group;
                           };
+                          fileConfig =
+                            { config, ... }:
+                            {
+                              filePath =
+                                if config.home != null then
+                                  concatPaths [ config.home config.file ]
+                                else
+                                  config.file;
+                            };
                           userFile = submodule [
                             commonOpts
                             fileOpts
                             { parentDirectory = mkDefault userDefaultPerms; }
+                            { inherit (config) home; }
+                            fileConfig
                           ];
+                          dirConfig =
+                            { config, ... }:
+                            {
+                              dirPath =
+                                if config.home != null then
+                                  concatPaths [ config.home config.directory ]
+                                else
+                                  config.directory;
+                            };
                           userDir = submodule ([
                             commonOpts
                             dirOpts
+                            { inherit (config) home; }
+                            dirConfig
                           ] ++ (mapAttrsToList (n: v: { ${n} = mkDefault v; }) userDefaultPerms));
                         in
                         {
@@ -203,6 +248,7 @@ in
                                   nixpkgs.
                                 '';
                               };
+
                               files = mkOption {
                                 type = listOf (coercedTo str (f: { file = f; }) userFile);
                                 default = [ ];
@@ -366,10 +412,10 @@ in
   config = {
     systemd.services =
       let
-        mkPersistFileService = { file, persistentStoragePath, ... }:
+        mkPersistFileService = { filePath, persistentStoragePath, ... }:
           let
-            targetFile = escapeShellArg (concatPaths [ persistentStoragePath file ]);
-            mountPoint = escapeShellArg file;
+            targetFile = escapeShellArg (concatPaths [ persistentStoragePath filePath ]);
+            mountPoint = escapeShellArg filePath;
             enableDebugging = escapeShellArg cfg.${persistentStoragePath}.enableDebugging;
           in
           {
@@ -412,11 +458,11 @@ in
           patchShebangs $out
         '';
 
-        mkDirWithPerms = { directory, persistentStoragePath, user, group, mode }:
+        mkDirWithPerms = { dirPath, persistentStoragePath, user, group, mode, ... }:
           let
             args = [
               persistentStoragePath
-              directory
+              dirPath
               user
               group
               mode
@@ -431,12 +477,16 @@ in
         # storage directories we want to bind mount.
         dirCreationScript =
           let
-            inherit directories;
             fileDirectories = unique (map
               (f:
-                {
+                rec {
                   directory = dirOf f.file;
-                  inherit (f) persistentStoragePath;
+                  dirPath =
+                    if f.home != null then
+                      concatPaths [ f.home directory ]
+                    else
+                      directory;
+                  inherit (f) persistentStoragePath home;
                 } // f.parentDirectory)
               files);
           in
@@ -447,10 +497,10 @@ in
             exit $_status
           '';
 
-        mkPersistFile = { file, persistentStoragePath, ... }:
+        mkPersistFile = { filePath, persistentStoragePath, ... }:
           let
-            mountPoint = file;
-            targetFile = concatPaths [ persistentStoragePath file ];
+            mountPoint = filePath;
+            targetFile = concatPaths [ persistentStoragePath filePath ];
             args = escapeShellArgs [
               mountPoint
               targetFile
