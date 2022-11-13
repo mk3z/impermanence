@@ -2,8 +2,8 @@
 
 let
   inherit (lib) attrNames attrValues zipAttrsWith flatten mkOption
-    types foldl' unique noDepEntry concatMapStrings listToAttrs
-    escapeShellArg escapeShellArgs replaceStrings recursiveUpdate all
+    mkDefault mapAttrsToList types foldl' unique concatMapStrings
+    listToAttrs escapeShellArg escapeShellArgs recursiveUpdate all
     filter filterAttrs concatStringsSep concatMapStringsSep isString
     catAttrs optional literalExpression;
 
@@ -66,10 +66,9 @@ in
                   };
                 };
               };
-              dirPermsOpts = { user, group, mode }: {
+              dirPermsOpts = {
                 user = mkOption {
                   type = str;
-                  default = user;
                   description = ''
                     If the directory doesn't exist in persistent
                     storage it will be created and owned by the user
@@ -78,7 +77,6 @@ in
                 };
                 group = mkOption {
                   type = str;
-                  default = group;
                   description = ''
                     If the directory doesn't exist in persistent
                     storage it will be created and owned by the
@@ -87,7 +85,6 @@ in
                 };
                 mode = mkOption {
                   type = str;
-                  default = mode;
                   example = "0700";
                   description = ''
                     If the directory doesn't exist in persistent
@@ -96,7 +93,7 @@ in
                   '';
                 };
               };
-              fileOpts = perms: {
+              fileOpts = {
                 options = {
                   file = mkOption {
                     type = str;
@@ -104,10 +101,10 @@ in
                       The path to the file.
                     '';
                   };
-                  parentDirectory = dirPermsOpts perms;
+                  parentDirectory = dirPermsOpts;
                 };
               };
-              dirOpts = perms: {
+              dirOpts = {
                 options = {
                   directory = mkOption {
                     type = str;
@@ -115,16 +112,17 @@ in
                       The path to the directory.
                     '';
                   };
-                } // (dirPermsOpts perms);
+                } // dirPermsOpts;
               };
               rootFile = submodule [
                 commonOpts
-                (fileOpts defaultPerms)
+                fileOpts
+                { parentDirectory = mkDefault defaultPerms; }
               ];
-              rootDir = submodule [
+              rootDir = submodule ([
                 commonOpts
-                (dirOpts defaultPerms)
-              ];
+                dirOpts
+              ] ++ (mapAttrsToList (n: v: { ${n} = mkDefault v; }) defaultPerms));
             in
             {
               options =
@@ -141,12 +139,13 @@ in
                           };
                           userFile = submodule [
                             commonOpts
-                            (fileOpts userDefaultPerms)
+                            fileOpts
+                            { parentDirectory = mkDefault userDefaultPerms; }
                           ];
-                          userDir = submodule [
+                          userDir = submodule ([
                             commonOpts
-                            (dirOpts userDefaultPerms)
-                          ];
+                            dirOpts
+                          ] ++ (mapAttrsToList (n: v: { ${n} = mkDefault v; }) userDefaultPerms));
                         in
                         {
                           options =
